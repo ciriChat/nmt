@@ -40,43 +40,75 @@ def decode_and_evaluate(name,
                         decode=True,
                         infer_mode="greedy"):
   """Decode a test set and compute a score according to the evaluation task."""
+  translations = []
   # Decode
   if decode:
+
     utils.print_out("  decoding to output %s" % trans_file)
 
     start_time = time.time()
     num_sentences = 0
-    with codecs.getwriter("utf-8")(
-        tf.gfile.GFile(trans_file, mode="wb")) as trans_f:
-      trans_f.write("")  # Write empty string to ensure file is created.
+    if trans_file:
+      with codecs.getwriter("utf-8")(tf.gfile.GFile(trans_file, mode="wb")) as trans_f:
+        trans_f.write("")  # Write empty string to ensure file is created.
 
-      if infer_mode == "greedy":
-        num_translations_per_input = 1
-      elif infer_mode == "beam_search":
-        num_translations_per_input = min(num_translations_per_input, beam_width)
+        if infer_mode == "greedy":
+          num_translations_per_input = 1
+        elif infer_mode == "beam_search":
+          num_translations_per_input = min(num_translations_per_input, beam_width)
 
-      while True:
-        try:
-          nmt_outputs, _ = model.decode(sess)
-          if infer_mode != "beam_search":
-            nmt_outputs = np.expand_dims(nmt_outputs, 0)
+        while True:
+          try:
+            nmt_outputs, _ = model.decode(sess)
+            if infer_mode != "beam_search":
+              nmt_outputs = np.expand_dims(nmt_outputs, 0)
 
-          batch_size = nmt_outputs.shape[1]
-          num_sentences += batch_size
+            batch_size = nmt_outputs.shape[1]
+            num_sentences += batch_size
 
-          for sent_id in range(batch_size):
-            for beam_id in range(num_translations_per_input):
-              translation = get_translation(
+            for sent_id in range(batch_size):
+              for beam_id in range(num_translations_per_input):
+                translation = get_translation(
+                    nmt_outputs[beam_id],
+                    sent_id,
+                    tgt_eos=tgt_eos,
+                    subword_option=subword_option)
+                translations.append(translation.decode("utf-8"))
+                trans_f.write((translation + b"\n").decode("utf-8"))
+          except tf.errors.OutOfRangeError:
+            utils.print_time(
+                "  done, num sentences %d, num translations per input %d" %
+                (num_sentences, num_translations_per_input), start_time)
+            break
+    else: # no transl file
+        if infer_mode == "greedy":
+          num_translations_per_input = 1
+        elif infer_mode == "beam_search":
+          num_translations_per_input = min(num_translations_per_input, beam_width)
+
+        while True:
+          try:
+            nmt_outputs, _ = model.decode(sess)
+            if infer_mode != "beam_search":
+              nmt_outputs = np.expand_dims(nmt_outputs, 0)
+
+            batch_size = nmt_outputs.shape[1]
+            num_sentences += batch_size
+
+            for sent_id in range(batch_size):
+              for beam_id in range(num_translations_per_input):
+                translation = get_translation(
                   nmt_outputs[beam_id],
                   sent_id,
                   tgt_eos=tgt_eos,
                   subword_option=subword_option)
-              trans_f.write((translation + b"\n").decode("utf-8"))
-        except tf.errors.OutOfRangeError:
-          utils.print_time(
+                translations.append(translation.decode("utf-8"))
+          except tf.errors.OutOfRangeError:
+            utils.print_time(
               "  done, num sentences %d, num translations per input %d" %
               (num_sentences, num_translations_per_input), start_time)
-          break
+            break
+    return translations
 
   # Evaluation
   evaluation_scores = {}

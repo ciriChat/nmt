@@ -653,37 +653,55 @@ def run_main(flags, default_hparams, train_fn, inference_fn, target_session=""):
         out_dir, default_hparams, flags.hparams_path,
         save_hparams=(jobid == 0))
 
+  if not inference_fn:
+      return hparams
   ## Train / Decode
-  if flags.inference_input_file:
+  if not train_fn or flags.inference_input_file:
     # Inference output directory
     trans_file = flags.inference_output_file
-    assert trans_file
-    trans_dir = os.path.dirname(trans_file)
-    if not tf.gfile.Exists(trans_dir): tf.gfile.MakeDirs(trans_dir)
+    if trans_file:
+        trans_dir = os.path.dirname(trans_file)
+        if not tf.gfile.Exists(trans_dir): tf.gfile.MakeDirs(trans_dir)
 
-    # Inference indices
-    hparams.inference_indices = None
-    if flags.inference_list:
-      (hparams.inference_indices) = (
-          [int(token)  for token in flags.inference_list.split(",")])
+        # Inference indices
+        hparams.inference_indices = None
+        if flags.inference_list:
+          (hparams.inference_indices) = (
+              [int(token)  for token in flags.inference_list.split(",")])
 
-    # Inference
-    ckpt = flags.ckpt
-    if not ckpt:
-      ckpt = tf.train.latest_checkpoint(out_dir)
-    inference_fn(ckpt, flags.inference_input_file,
-                 trans_file, hparams, num_workers, jobid)
+        # Inference
+        ckpt = flags.ckpt
+        if not ckpt:
+          ckpt = tf.train.latest_checkpoint(out_dir)
 
-    # Evaluation
-    ref_file = flags.inference_ref_file
-    if ref_file and tf.gfile.Exists(trans_file):
-      for metric in hparams.metrics:
-        score = evaluation_utils.evaluate(
-            ref_file,
-            trans_file,
-            metric,
-            hparams.subword_option)
-        utils.print_out("  %s: %.1f" % (metric, score))
+
+        inference_fn(ckpt, flags.inference_input_file,
+                                    trans_file, hparams, num_workers, jobid)
+        # Evaluation
+        ref_file = flags.inference_ref_file
+        if ref_file and tf.gfile.Exists(trans_file):
+          for metric in hparams.metrics:
+            score = evaluation_utils.evaluate(
+                ref_file,
+                trans_file,
+                metric,
+                hparams.subword_option)
+            utils.print_out("  %s: %.1f" % (metric, score))
+    else: #my
+        # Inference indices
+        hparams.inference_indices = None
+        if flags.inference_list:
+          (hparams.inference_indices) = (
+              [int(token)  for token in flags.inference_list.split(",")])
+
+        # Inference
+        ckpt = flags.ckpt
+        if not ckpt:
+            ckpt = tf.train.latest_checkpoint(out_dir)
+
+        translations = inference_fn(ckpt, flags.question,
+                                    None, hparams, num_workers, jobid)
+        return translations
   else:
     # Train
     train_fn(hparams, target_session=target_session)
@@ -693,11 +711,20 @@ def main(unused_argv):
   default_hparams = create_hparams(FLAGS)
   train_fn = train.train
   inference_fn = inference.inference
-  run_main(FLAGS, default_hparams, train_fn, inference_fn)
-
+  translations = run_main(FLAGS, default_hparams, train_fn, inference_fn)
 
 if __name__ == "__main__":
   nmt_parser = argparse.ArgumentParser()
   add_arguments(nmt_parser)
   FLAGS, unparsed = nmt_parser.parse_known_args()
   tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
+
+def import_hparams(out_dir):
+    nmt_parser = argparse.ArgumentParser()
+    add_arguments(nmt_parser)
+    FLAGS, unparsed = nmt_parser.parse_known_args()
+    FLAGS.out_dir=out_dir
+    default_hparams = create_hparams(FLAGS)
+    return run_main(FLAGS, default_hparams, None, None)
+
+

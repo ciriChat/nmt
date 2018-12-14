@@ -37,6 +37,7 @@ def _decode_inference_indices(model, sess, output_infer,
                               inference_indices,
                               tgt_eos,
                               subword_option):
+  if not output_infer: return
   """Decoding only a specific set of sentences."""
   utils.print_out("  decoding to output %s , num sents %d." %
                   (output_infer, len(inference_indices)))
@@ -105,6 +106,10 @@ def start_sess_and_load_model(infer_model, ckpt_path):
   return sess, loaded_infer_model
 
 
+infer_model = None
+sess = None
+loaded_infer_model = None
+
 def inference(ckpt_path,
               inference_input_file,
               inference_output_file,
@@ -115,13 +120,18 @@ def inference(ckpt_path,
   """Perform translation."""
   if hparams.inference_indices:
     assert num_workers == 1
+  global infer_model
+  global sess
+  global loaded_infer_model
 
-  model_creator = get_model_creator(hparams)
-  infer_model = model_helper.create_infer_model(model_creator, hparams, scope)
-  sess, loaded_infer_model = start_sess_and_load_model(infer_model, ckpt_path)
+  if not infer_model:
+    model_creator = get_model_creator(hparams)
+    infer_model = model_helper.create_infer_model(model_creator, hparams, scope)
+    sess, loaded_infer_model = start_sess_and_load_model(infer_model, ckpt_path)
 
+  translations = []
   if num_workers == 1:
-    single_worker_inference(
+    translations = single_worker_inference(
         sess,
         infer_model,
         loaded_infer_model,
@@ -139,7 +149,36 @@ def inference(ckpt_path,
         num_workers=num_workers,
         jobid=jobid)
   sess.close()
+  return translations
 
+hparams = None
+def initialize(
+              _hparams,
+              scope=None):
+  global hparams
+  hparams = _hparams
+  global infer_model
+  global sess
+  global loaded_infer_model
+  ckpt_path  = tf.train.latest_checkpoint(hparams.out_dir)
+  print("got ckpt path: ", ckpt_path)
+  if not infer_model:
+    model_creator = get_model_creator(hparams)
+    infer_model = model_helper.create_infer_model(model_creator, hparams, scope)
+    sess, loaded_infer_model = start_sess_and_load_model(infer_model, ckpt_path)
+  return sess
+
+
+def get_answers(question):
+    global hparams
+    translations = single_worker_inference(
+        sess,
+        infer_model,
+        loaded_infer_model,
+        question,
+        None,
+        hparams)
+    return translations
 
 def single_worker_inference(sess,
                             infer_model,
@@ -148,10 +187,14 @@ def single_worker_inference(sess,
                             inference_output_file,
                             hparams):
   """Inference with a single worker."""
+
   output_infer = inference_output_file
 
   # Read data
-  infer_data = load_data(inference_input_file, hparams)
+  if not inference_output_file:
+      infer_data = [inference_input_file] #question
+  else:
+    infer_data = load_data(inference_input_file, hparams)
 
   with infer_model.graph.as_default():
     sess.run(
@@ -162,7 +205,7 @@ def single_worker_inference(sess,
         })
     # Decode
     utils.print_out("# Start decoding")
-    if hparams.inference_indices:
+    if 'inference_indices' in hparams and hparams.inference_indices:
       _decode_inference_indices(
           loaded_infer_model,
           sess,
@@ -172,7 +215,7 @@ def single_worker_inference(sess,
           tgt_eos=hparams.eos,
           subword_option=hparams.subword_option)
     else:
-      nmt_utils.decode_and_evaluate(
+      return nmt_utils.decode_and_evaluate(
           "infer",
           loaded_infer_model,
           sess,
